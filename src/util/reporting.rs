@@ -3,7 +3,7 @@
 //! This module provides functionality for displaying and exporting conversion results,
 //! including console output formatting and file export in various formats.
 
-use crate::camera::{CameraModel, CameraModelEnum};
+use crate::camera::{CameraModel, CameraWithResolution};
 use serde::{Deserialize, Serialize};
 use std::fs::File;
 use std::io::Write;
@@ -20,7 +20,7 @@ use super::{ensure_output_dir, UtilError};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ConversionMetrics {
     /// The converted camera model
-    pub model: CameraModelEnum,
+    pub model: CameraWithResolution,
     /// Human-readable name of the model
     pub model_name: String,
     /// Final reprojection error after optimization

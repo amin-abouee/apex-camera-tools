@@ -65,12 +65,12 @@ impl From<CameraModelError> for UtilError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::camera::{CameraModel, DoubleSphereModel};
+    use crate::camera::{CameraWithResolution, YamlCamera};
 
     #[test]
     fn test_sample_points() {
         let input_path = "samples/double_sphere.yaml";
-        let camera_model = DoubleSphereModel::load_from_yaml(input_path).unwrap();
+        let camera_model = CameraWithResolution::load_from_yaml(input_path).unwrap();
         let n = 100_usize;
         let (points_2d, points_3d) = sample_points(Some(&camera_model), n).unwrap();
 
