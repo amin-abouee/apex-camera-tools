@@ -1,15 +1,10 @@
 [package]
-name = "apex-camera-models"
+name = "camera-tools"
 version = "0.4.1"
-edition = "2021"
+edition = "2024"
 authors = ["Amin Abouee"]
-description = "A comprehensive Rust library for fisheye and wide-angle camera models with tiny-solver-based optimization"
+description = "A CLI application for fisheye and wide-angle camera model conversion and image undistortion"
 license = "MIT"
-repository = "https://github.com/username/apex-camera-models"
-homepage = "https://github.com/username/apex-camera-models"
-documentation = "https://docs.rs/apex-camera-models"
-keywords = ["camera", "fisheye", "computer-vision", "calibration", "optimization"]
-categories = ["computer-vision", "science", "algorithms"]
 readme = "README.md"
 exclude = [
     "logs/*",
@@ -18,14 +13,11 @@ exclude = [
     ".github/*"
 ]
 
-[package.metadata.docs.rs]
-all-features = true
-rustdoc-args = ["--cfg", "docsrs"]
-
 [dependencies]
 # Core dependencies
 nalgebra = "0.33.2"
-apex-solver = "0.1.5"
+apex-solver = "1.2.1"
+apex-camera-models = "0.1.0"
 thiserror = "2.0.12"
 
 # Serialization
@@ -46,32 +38,18 @@ csv = "1.3.1"
 clap = { version = "4.5.38", features = ["derive"] }
 
 [dev-dependencies]
-# Testing dependencies
 approx = "0.5.1"
-
-# Example dependencies
 flexi_logger = "0.30"
 
-[[bin]]
-name = "camera_converter"
-path = "bin/camera_converter.rs"
-
 [profile.release]
-# Optimize for performance
 opt-level = 3
-lto = false          # Disabled for faster builds (was: true)
-codegen-units = 16   # Parallel compilation (was: 1)
+lto = false
+codegen-units = 16
 panic = "abort"
 
 [profile.dev]
-# Faster compilation for development
 opt-level = 0
 debug = true
 
 [profile.test]
-# Optimize tests for better performance
 opt-level = 2
-
-[[bin]]
-name = "image_undistort"
-path = "bin/image_undistort.rs"
