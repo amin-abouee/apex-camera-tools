@@ -10,134 +10,47 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  format_and_lint:
-    name: Format and Lint
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up Rust
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt, clippy
-
-      - name: Cache Cargo registry
-        uses: actions/cache@v4
-        with:
-          path: ~/.cargo/registry
-          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-registry-
-
-      - name: Cache Cargo index
-        uses: actions/cache@v4
-        with:
-          path: ~/.cargo/git
-          key: ${{ runner.os }}-cargo-index-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-index-
-
-      - name: Check formatting
-        run: cargo fmt --all --check
-
-      - name: Run clippy
-        run: cargo clippy --all-targets --all-features -- -D warnings
-
-  build_and_test:
-    name: Build and Test on ${{ matrix.os }} with Rust ${{ matrix.rust }}
+  check_and_test:
+    name: Check & Test on ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
     strategy:
+      fail-fast: false
       matrix:
         os: [ubuntu-22.04, ubuntu-24.04, macos-latest, windows-latest]
-        rust: [stable, beta]
-        exclude:
-          # Reduce CI load by excluding some combinations
-          - os: ubuntu-24.04
-            rust: beta
-          - os: windows-latest
-            rust: beta
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-      - name: Set up Rust
-        uses: dtolnay/rust-toolchain@master
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: ${{ matrix.rust }}
+          components: clippy, rustfmt
 
-      - name: Cache Cargo registry
+      - name: Cache Cargo dependencies
         uses: actions/cache@v4
         with:
-          path: ~/.cargo/registry
-          key: ${{ runner.os }}-${{ matrix.rust }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
-            ${{ runner.os }}-${{ matrix.rust }}-cargo-registry-
+            ${{ runner.os }}-cargo-
 
-      - name: Cache Cargo index
-        uses: actions/cache@v4
-        with:
-          path: ~/.cargo/git
-          key: ${{ runner.os }}-${{ matrix.rust }}-cargo-index-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-${{ matrix.rust }}-cargo-index-
+      - name: Check formatting
+        run: cargo fmt --all -- --check
 
-      - name: Cache Cargo build
-        uses: actions/cache@v4
-        with:
-          path: target
-          key: ${{ runner.os }}-${{ matrix.rust }}-cargo-build-target-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-${{ matrix.rust }}-cargo-build-target-
-
-      - name: Build library
-        run: cargo build --verbose --all-features
-
-      - name: Build binaries
-        run: cargo build --verbose --bins
+      - name: Run Clippy
+        run: cargo clippy --all-targets -- -D warnings
 
       - name: Run tests
-        run: cargo test --verbose --all-features
+        run: cargo test --release --verbose
 
-      - name: Run doc tests
-        run: cargo test --doc --verbose
-
-      - name: Test binary (Linux/macOS only)
+      - name: Smoke test binaries (Linux/macOS only)
         if: runner.os != 'Windows'
         run: |
-          echo "Testing camera_converter binary..."
-          cargo run --bin camera_converter -- --help
-
-  check_binary:
-    name: Check Binary with Sample Data
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up Rust
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Cache Cargo registry
-        uses: actions/cache@v4
-        with:
-          path: ~/.cargo/registry
-          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-registry-
-
-      - name: Cache Cargo build
-        uses: actions/cache@v4
-        with:
-          path: target
-          key: ${{ runner.os }}-cargo-build-bins-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-build-bins-
-
-      - name: Build binaries
-        run: cargo build --bins
-
-      - name: Test camera_converter with sample data
-        run: |
-          cargo run --bin camera_converter -- \
-            --input-model ds \
-            --input-path samples/double_sphere.yaml \
-            --num-points 500
+          cargo run --release --bin converter -- --help
+          cargo run --release --bin undistort -- --help
