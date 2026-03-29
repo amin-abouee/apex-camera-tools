@@ -1,8 +1,8 @@
-use apex_camera_models::{
-    DistortionModel, DoubleSphereCamera, EucmCamera, FovCamera, KannalaBrandtCamera,
-    PinholeCamera, PinholeParams, RadTanCamera, UcmCamera,
-};
 use apex_camera_models::CameraModel as ApexCameraModel;
+use apex_camera_models::{
+    DistortionModel, DoubleSphereCamera, EucmCamera, FovCamera, KannalaBrandtCamera, PinholeCamera,
+    PinholeParams, RadTanCamera, UcmCamera,
+};
 use nalgebra::{Vector2, Vector3};
 use serde::{Deserialize, Serialize};
 
@@ -105,42 +105,74 @@ impl CameraWithResolution {
             "pinhole" => Ok(DistortionModel::None),
             "double_sphere" => {
                 if d.len() < 2 {
-                    return Err(CameraModelError::InvalidParams("DS needs 2 distortion params".into()));
+                    return Err(CameraModelError::InvalidParams(
+                        "DS needs 2 distortion params".into(),
+                    ));
                 }
                 // YAML order: [alpha, xi]
-                Ok(DistortionModel::DoubleSphere { xi: d[1], alpha: d[0] })
+                Ok(DistortionModel::DoubleSphere {
+                    xi: d[1],
+                    alpha: d[0],
+                })
             }
             "eucm" => {
                 if d.len() < 2 {
-                    return Err(CameraModelError::InvalidParams("EUCM needs 2 distortion params".into()));
+                    return Err(CameraModelError::InvalidParams(
+                        "EUCM needs 2 distortion params".into(),
+                    ));
                 }
-                Ok(DistortionModel::EUCM { alpha: d[0], beta: d[1] })
+                Ok(DistortionModel::EUCM {
+                    alpha: d[0],
+                    beta: d[1],
+                })
             }
             "fov" => {
-                if d.len() < 1 {
-                    return Err(CameraModelError::InvalidParams("FOV needs 1 distortion param".into()));
+                if d.is_empty() {
+                    return Err(CameraModelError::InvalidParams(
+                        "FOV needs 1 distortion param".into(),
+                    ));
                 }
                 Ok(DistortionModel::FOV { w: d[0] })
             }
             "kannala_brandt" => {
                 if d.len() < 4 {
-                    return Err(CameraModelError::InvalidParams("KB needs 4 distortion params".into()));
+                    return Err(CameraModelError::InvalidParams(
+                        "KB needs 4 distortion params".into(),
+                    ));
                 }
-                Ok(DistortionModel::KannalaBrandt { k1: d[0], k2: d[1], k3: d[2], k4: d[3] })
+                Ok(DistortionModel::KannalaBrandt {
+                    k1: d[0],
+                    k2: d[1],
+                    k3: d[2],
+                    k4: d[3],
+                })
             }
             "rad_tan" => {
                 if d.len() < 5 {
-                    return Err(CameraModelError::InvalidParams("RadTan needs 5 distortion params".into()));
+                    return Err(CameraModelError::InvalidParams(
+                        "RadTan needs 5 distortion params".into(),
+                    ));
                 }
-                Ok(DistortionModel::BrownConrady { k1: d[0], k2: d[1], p1: d[2], p2: d[3], k3: d[4] })
+                Ok(DistortionModel::BrownConrady {
+                    k1: d[0],
+                    k2: d[1],
+                    p1: d[2],
+                    p2: d[3],
+                    k3: d[4],
+                })
             }
             "ucm" => {
-                if d.len() < 1 {
-                    return Err(CameraModelError::InvalidParams("UCM needs 1 distortion param".into()));
+                if d.is_empty() {
+                    return Err(CameraModelError::InvalidParams(
+                        "UCM needs 1 distortion param".into(),
+                    ));
                 }
                 Ok(DistortionModel::UCM { alpha: d[0] })
             }
-            _ => Err(CameraModelError::InvalidParams(format!("Unknown model: {}", self.model_name))),
+            _ => Err(CameraModelError::InvalidParams(format!(
+                "Unknown model: {}",
+                self.model_name
+            ))),
         }
     }
 }
@@ -160,7 +192,10 @@ impl CameraModel for CameraWithResolution {
             }
             "eucm" => {
                 // Direct construction to bypass alpha validation (alpha > 1 support)
-                let cam = EucmCamera { pinhole, distortion };
+                let cam = EucmCamera {
+                    pinhole,
+                    distortion,
+                };
                 Ok(cam.project(point_3d)?)
             }
             "fov" => {
@@ -177,10 +212,16 @@ impl CameraModel for CameraWithResolution {
             }
             "ucm" => {
                 // Direct construction to bypass alpha validation (alpha > 1 support)
-                let cam = UcmCamera { pinhole, distortion };
+                let cam = UcmCamera {
+                    pinhole,
+                    distortion,
+                };
                 Ok(cam.project(point_3d)?)
             }
-            _ => Err(CameraModelError::InvalidParams(format!("Unknown model: {}", self.model_name))),
+            _ => Err(CameraModelError::InvalidParams(format!(
+                "Unknown model: {}",
+                self.model_name
+            ))),
         }
     }
 
@@ -197,7 +238,10 @@ impl CameraModel for CameraWithResolution {
                 Ok(cam.unproject(point_2d)?)
             }
             "eucm" => {
-                let cam = EucmCamera { pinhole, distortion };
+                let cam = EucmCamera {
+                    pinhole,
+                    distortion,
+                };
                 Ok(cam.unproject(point_2d)?)
             }
             "fov" => {
@@ -213,10 +257,16 @@ impl CameraModel for CameraWithResolution {
                 Ok(cam.unproject(point_2d)?)
             }
             "ucm" => {
-                let cam = UcmCamera { pinhole, distortion };
+                let cam = UcmCamera {
+                    pinhole,
+                    distortion,
+                };
                 Ok(cam.unproject(point_2d)?)
             }
-            _ => Err(CameraModelError::InvalidParams(format!("Unknown model: {}", self.model_name))),
+            _ => Err(CameraModelError::InvalidParams(format!(
+                "Unknown model: {}",
+                self.model_name
+            ))),
         }
     }
 
@@ -263,7 +313,9 @@ mod yaml_io {
             "kannala_brandt" | "kb" => Ok("kannala_brandt"),
             "rad_tan" | "radtan" => Ok("rad_tan"),
             "ucm" | "unified" => Ok("ucm"),
-            _ => Err(CameraModelError::InvalidParams(format!("Unknown camera model: {name}"))),
+            _ => Err(CameraModelError::InvalidParams(format!(
+                "Unknown camera model: {name}"
+            ))),
         }
     }
 
@@ -286,20 +338,24 @@ mod yaml_io {
         let docs = YamlLoader::load_from_str(&contents)?;
 
         if docs.is_empty() {
-            return Err(CameraModelError::InvalidParams("Empty YAML document".into()));
+            return Err(CameraModelError::InvalidParams(
+                "Empty YAML document".into(),
+            ));
         }
 
         let doc = &docs[0];
         let cam_node = &doc["cam0"];
 
         if cam_node.is_badvalue() {
-            return Err(CameraModelError::InvalidParams("Missing 'cam0' node in YAML".into()));
+            return Err(CameraModelError::InvalidParams(
+                "Missing 'cam0' node in YAML".into(),
+            ));
         }
 
         // Get camera model name
-        let model_name_raw = cam_node["camera_model"]
-            .as_str()
-            .ok_or_else(|| CameraModelError::InvalidParams("Missing 'camera_model' field".into()))?;
+        let model_name_raw = cam_node["camera_model"].as_str().ok_or_else(|| {
+            CameraModelError::InvalidParams("Missing 'camera_model' field".into())
+        })?;
         let model_name = normalize_model_name(model_name_raw)?;
         let min_len = expected_intrinsics_len(model_name);
 
@@ -318,7 +374,8 @@ mod yaml_io {
         if intrinsics_yaml.len() < required_intrinsics {
             return Err(CameraModelError::InvalidParams(format!(
                 "Intrinsics array must have at least {} elements, got {}",
-                required_intrinsics, intrinsics_yaml.len()
+                required_intrinsics,
+                intrinsics_yaml.len()
             )));
         }
 
@@ -432,8 +489,16 @@ mod tests {
 
     fn make_camera(model_name: &str, distortion_params: Vec<f64>) -> CameraWithResolution {
         CameraWithResolution {
-            intrinsics: Intrinsics { fx: 350.0, fy: 350.0, cx: 320.0, cy: 240.0 },
-            resolution: Resolution { width: 640, height: 480 },
+            intrinsics: Intrinsics {
+                fx: 350.0,
+                fy: 350.0,
+                cx: 320.0,
+                cy: 240.0,
+            },
+            resolution: Resolution {
+                width: 640,
+                height: 480,
+            },
             model_name: model_name.to_string(),
             distortion_params,
         }
@@ -505,11 +570,20 @@ mod tests {
     #[test]
     fn test_model_names() {
         assert_eq!(make_camera("pinhole", vec![]).get_model_name(), "pinhole");
-        assert_eq!(make_camera("double_sphere", vec![0.58, -0.18]).get_model_name(), "double_sphere");
+        assert_eq!(
+            make_camera("double_sphere", vec![0.58, -0.18]).get_model_name(),
+            "double_sphere"
+        );
         assert_eq!(make_camera("eucm", vec![0.5, 1.0]).get_model_name(), "eucm");
         assert_eq!(make_camera("fov", vec![0.9]).get_model_name(), "fov");
-        assert_eq!(make_camera("kannala_brandt", vec![0.0; 4]).get_model_name(), "kannala_brandt");
-        assert_eq!(make_camera("rad_tan", vec![0.0; 5]).get_model_name(), "rad_tan");
+        assert_eq!(
+            make_camera("kannala_brandt", vec![0.0; 4]).get_model_name(),
+            "kannala_brandt"
+        );
+        assert_eq!(
+            make_camera("rad_tan", vec![0.0; 5]).get_model_name(),
+            "rad_tan"
+        );
         assert_eq!(make_camera("ucm", vec![0.8]).get_model_name(), "ucm");
     }
 
@@ -524,7 +598,11 @@ mod tests {
         assert_relative_eq!(loaded.intrinsics.fy, cam.intrinsics.fy, epsilon = 1e-10);
         assert_eq!(loaded.resolution.width, cam.resolution.width);
         assert_eq!(loaded.distortion_params.len(), cam.distortion_params.len());
-        for (a, b) in loaded.distortion_params.iter().zip(cam.distortion_params.iter()) {
+        for (a, b) in loaded
+            .distortion_params
+            .iter()
+            .zip(cam.distortion_params.iter())
+        {
             assert_relative_eq!(a, b, epsilon = 1e-10);
         }
     }

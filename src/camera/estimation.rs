@@ -179,7 +179,10 @@ pub fn linear_estimation_fov(
     }
 
     let w = best_w.clamp(0.01, 3.0);
-    info!("FOV linear estimation: w = {}, avg_error = {}", w, best_error);
+    info!(
+        "FOV linear estimation: w = {}, avg_error = {}",
+        w, best_error
+    );
 
     cam.distortion_params = vec![w];
     Ok(())
@@ -240,8 +243,16 @@ pub fn linear_estimation_kannala_brandt(
         a_mat[(i * 2 + 1, 2)] = theta7;
         a_mat[(i * 2 + 1, 3)] = theta9;
 
-        let x_r = if r_world < f64::EPSILON { 0.0 } else { x_world / r_world };
-        let y_r = if r_world < f64::EPSILON { 0.0 } else { y_world / r_world };
+        let x_r = if r_world < f64::EPSILON {
+            0.0
+        } else {
+            x_world / r_world
+        };
+        let y_r = if r_world < f64::EPSILON {
+            0.0
+        } else {
+            y_world / r_world
+        };
 
         if x_r.abs() > f64::EPSILON {
             b_vec[i * 2] = (u_img - cam.intrinsics.cx) / (cam.intrinsics.fx * x_r) - theta;
@@ -254,8 +265,7 @@ pub fn linear_estimation_kannala_brandt(
         }
 
         if y_r.abs() > f64::EPSILON {
-            b_vec[i * 2 + 1] =
-                (v_img - cam.intrinsics.cy) / (cam.intrinsics.fy * y_r) - theta;
+            b_vec[i * 2 + 1] = (v_img - cam.intrinsics.cy) / (cam.intrinsics.fy * y_r) - theta;
         } else {
             b_vec[i * 2 + 1] = if (v_img - cam.intrinsics.cy).abs() < f64::EPSILON {
                 -theta
@@ -266,9 +276,9 @@ pub fn linear_estimation_kannala_brandt(
     }
 
     let svd = a_mat.svd(true, true);
-    let x_coeffs = svd.solve(&b_vec, f64::EPSILON).map_err(|e_str| {
-        CameraModelError::NumericalError(format!("SVD solve failed: {e_str}"))
-    })?;
+    let x_coeffs = svd
+        .solve(&b_vec, f64::EPSILON)
+        .map_err(|e_str| CameraModelError::NumericalError(format!("SVD solve failed: {e_str}")))?;
 
     cam.distortion_params = vec![x_coeffs[0], x_coeffs[1], x_coeffs[2], x_coeffs[3]];
     info!(
