@@ -13,6 +13,18 @@ exclude = [
     ".github/*"
 ]
 
+[lib]
+name = "camera_tools"
+path = "src/lib.rs"
+
+[[bin]]
+name = "converter"
+path = "bin/converter.rs"
+
+[[bin]]
+name = "undistort"
+path = "bin/undistort.rs"
+
 [dependencies]
 # Core dependencies
 nalgebra = "0.33.2"
