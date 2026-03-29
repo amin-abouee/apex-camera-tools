@@ -3,7 +3,7 @@
 //! This module provides functionality for displaying and exporting conversion results,
 //! including console output formatting and file export in various formats.
 
-use crate::camera::{CameraModel, CameraModelEnum};
+use crate::camera::{CameraModel, CameraWithResolution};
 use serde::{Deserialize, Serialize};
 use std::fs::File;
 use std::io::Write;
@@ -11,7 +11,7 @@ use std::io::Write;
 use super::error_metrics::ProjectionError;
 use super::image_quality::ImageQualityMetrics;
 use super::validation::ValidationResults;
-use super::{ensure_output_dir, UtilError};
+use super::{UtilError, ensure_output_dir};
 
 /// Comprehensive metrics for camera model conversion evaluation.
 ///
@@ -20,7 +20,7 @@ use super::{ensure_output_dir, UtilError};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ConversionMetrics {
     /// The converted camera model
-    pub model: CameraModelEnum,
+    pub model: CameraWithResolution,
     /// Human-readable name of the model
     pub model_name: String,
     /// Final reprojection error after optimization
@@ -66,15 +66,28 @@ pub fn display_input_model_parameters(model_type: &str, camera_model: &dyn Camer
         "kb" | "kannala_brandt" => {
             println!(
                 "KB parameters: fx={:.3}, fy={:.3}, cx={:.3}, cy={:.3}, k1={:.6}, k2={:.6}, k3={:.6}, k4={:.6}",
-                intrinsics.fx, intrinsics.fy, intrinsics.cx, intrinsics.cy,
-                distortion[0], distortion[1], distortion[2], distortion[3]
+                intrinsics.fx,
+                intrinsics.fy,
+                intrinsics.cx,
+                intrinsics.cy,
+                distortion[0],
+                distortion[1],
+                distortion[2],
+                distortion[3]
             );
         }
         "radtan" | "rad_tan" => {
             println!(
                 "RadTan parameters: fx={:.3}, fy={:.3}, cx={:.3}, cy={:.3}, k1={:.6}, k2={:.6}, p1={:.6}, p2={:.6}, k3={:.6}",
-                intrinsics.fx, intrinsics.fy, intrinsics.cx, intrinsics.cy,
-                distortion[0], distortion[1], distortion[2], distortion[3], distortion[4]
+                intrinsics.fx,
+                intrinsics.fy,
+                intrinsics.cx,
+                intrinsics.cy,
+                distortion[0],
+                distortion[1],
+                distortion[2],
+                distortion[3],
+                distortion[4]
             );
         }
         "ucm" | "unified" => {
@@ -254,7 +267,10 @@ pub fn export_conversion_results(
     writeln!(report_file)?;
 
     if metrics.is_empty() {
-        writeln!(report_file, "❌ No conversions performed (input model type not supported for conversion or no target models available)")?;
+        writeln!(
+            report_file,
+            "❌ No conversions performed (input model type not supported for conversion or no target models available)"
+        )?;
         return Ok(());
     }
 
@@ -427,16 +443,26 @@ pub fn display_results_summary(metrics: &[ConversionMetrics], input_model_type: 
     println!("====================================");
 
     if metrics.is_empty() {
-        println!("❌ No conversions performed (input model type not supported for conversion or no target models available)");
+        println!(
+            "❌ No conversions performed (input model type not supported for conversion or no target models available)"
+        );
         return;
     }
 
     // Print detailed results table
     println!("\n📋 CONVERSION RESULTS TABLE");
-    println!("┌────────────────────────────────┬─────────────────┬─────────────────┬─────────────────┬─────────────────┐");
-    println!("│ Target Model                   │ Final Error     │ Improvement     │ Time (ms)       │ Convergence     │");
-    println!("│                                │ (pixels)        │ (pixels)        │                 │ Status          │");
-    println!("├────────────────────────────────┼─────────────────┼─────────────────┼─────────────────┼─────────────────┤");
+    println!(
+        "┌────────────────────────────────┬─────────────────┬─────────────────┬─────────────────┬─────────────────┐"
+    );
+    println!(
+        "│ Target Model                   │ Final Error     │ Improvement     │ Time (ms)       │ Convergence     │"
+    );
+    println!(
+        "│                                │ (pixels)        │ (pixels)        │                 │ Status          │"
+    );
+    println!(
+        "├────────────────────────────────┼─────────────────┼─────────────────┼─────────────────┼─────────────────┤"
+    );
 
     for metric in metrics {
         let improvement =
@@ -450,7 +476,9 @@ pub fn display_results_summary(metrics: &[ConversionMetrics], input_model_type: 
             metric.convergence_status
         );
     }
-    println!("└────────────────────────────────┴─────────────────┴─────────────────┴─────────────────┴─────────────────┘");
+    println!(
+        "└────────────────────────────────┴─────────────────┴─────────────────┴─────────────────┴─────────────────┘"
+    );
 
     // Step 5: Performance analysis
     println!("\n📈 Step 5: Performance Analysis");

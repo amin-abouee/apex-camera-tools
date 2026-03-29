@@ -1,424 +1,345 @@
-//! This module defines the core functionalities for various camera models.
-//!
-//! It provides a unified interface for camera operations such as projecting 3D points
-//! to 2D image coordinates and unprojecting 2D image coordinates to 3D rays.
-//! The module also includes definitions for camera intrinsic parameters, resolution,
-//! and error handling for camera operations.
-//!
-//! This module re-exports several specific camera model implementations from its submodules:
-//! - `double_sphere`: Implements the Double Sphere camera model.
-//! - `kannala_brandt`: Implements the Kannala-Brandt camera model.
-//! - `pinhole`: Implements the Pinhole camera model.
-//! - `rad_tan`: Implements the Radial-Tangential distortion model (often used with pinhole).
-//!
-//! It also contains a `validation` submodule for common parameter validation logic.
-
+use apex_camera_models::CameraModel as ApexCameraModel;
+use apex_camera_models::{
+    DistortionModel, DoubleSphereCamera, EucmCamera, FovCamera, KannalaBrandtCamera, PinholeCamera,
+    PinholeParams, RadTanCamera, UcmCamera,
+};
 use nalgebra::{Vector2, Vector3};
 use serde::{Deserialize, Serialize};
 
-// Camera model modules
-pub mod double_sphere;
-pub mod eucm;
-pub mod fov;
-pub mod kannala_brandt;
-pub mod pinhole;
-pub mod rad_tan;
-pub mod ucm;
+pub mod estimation;
 
-// Re-export camera models
-pub use double_sphere::DoubleSphereModel;
-pub use eucm::EucmModel;
-pub use fov::FovModel;
-pub use kannala_brandt::KannalaBrandtModel;
-pub use pinhole::PinholeModel;
-pub use rad_tan::RadTanModel;
-pub use ucm::UcmModel;
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum CameraModelEnum {
-    DoubleSphere(DoubleSphereModel),
-    Eucm(EucmModel),
-    Fov(FovModel),
-    KannalaBrandt(KannalaBrandtModel),
-    Pinhole(PinholeModel),
-    RadTan(RadTanModel),
-    Ucm(UcmModel),
-}
-
-/// Represents the intrinsic parameters of a camera.
-///
-/// These parameters define the internal geometry of the camera,
-/// including focal length and principal point.
+/// Camera intrinsic parameters.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Intrinsics {
-    /// The focal length along the x-axis, in pixels.
     pub fx: f64,
-    /// The focal length along the y-axis, in pixels.
     pub fy: f64,
-    /// The x-coordinate of the principal point (optical center), in pixels.
     pub cx: f64,
-    /// The y-coordinate of the principal point (optical center), in pixels.
     pub cy: f64,
 }
 
-/// Represents the resolution of a camera image.
-///
-/// This struct holds the width and height of the image sensor in pixels.
+/// Image resolution.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Resolution {
-    /// The width of the image in pixels.
     pub width: u32,
-    /// The height of the image in pixels.
     pub height: u32,
 }
 
-/// Defines the possible errors that can occur during camera model operations.
-///
-/// This enum covers errors related to projection, unprojection, parameter validation,
-/// file I/O, and numerical issues.
 #[derive(thiserror::Error, Debug)]
 pub enum CameraModelError {
-    /// Error indicating that a 3D point projects outside the valid image area.
     #[error("Projection is outside the image")]
     ProjectionOutSideImage,
-    /// Error indicating that an input 2D point for unprojection is outside the valid image area.
     #[error("Input point is outside the image")]
     PointIsOutSideImage,
-    /// Error indicating that a 3D point is too close to the camera center (z-coordinate is near zero),
-    /// making projection or unprojection numerically unstable or undefined.
     #[error("z is close to zero, point is at camera center")]
     PointAtCameraCenter,
-    /// Error indicating that a focal length parameter (fx or fy) is not positive.
     #[error("Focal length must be positive")]
     FocalLengthMustBePositive,
-    /// Error indicating that a principal point coordinate (cx or cy) is not a finite number.
     #[error("Principal point must be finite")]
     PrincipalPointMustBeFinite,
-    /// Error indicating that one or more camera parameters are invalid.
-    /// Contains a string describing the specific parameter issue.
     #[error("Invalid camera parameters: {0}")]
     InvalidParams(String),
-    /// Error indicating a failure during YAML deserialization when loading camera parameters.
-    /// Contains a string describing the YAML parsing error.
     #[error("Failed to load YAML: {0}")]
     YamlError(String),
-    /// Error indicating a failure during file input/output operations.
-    /// Contains a string describing the I/O error.
     #[error("IO Error: {0}")]
     IOError(String),
-    /// Error indicating a numerical instability or issue during calculations.
-    /// Contains a string describing the numerical error.
     #[error("NumericalError: {0}")]
     NumericalError(String),
 }
 
-/// Implements the conversion from `std::io::Error` to `CameraModelError::IOError`.
-///
-/// This allows for seamless handling of I/O errors within the camera model context.
 impl From<std::io::Error> for CameraModelError {
     fn from(err: std::io::Error) -> Self {
         CameraModelError::IOError(err.to_string())
     }
 }
 
-/// Implements the conversion from `yaml_rust::ScanError` to `CameraModelError::YamlError`.
-///
-/// This allows for seamless handling of YAML parsing errors when loading camera parameters.
 impl From<yaml_rust::ScanError> for CameraModelError {
     fn from(err: yaml_rust::ScanError) -> Self {
         CameraModelError::YamlError(err.to_string())
     }
 }
 
-/// Validates that a projected 2D point falls within the image boundaries.
-///
-/// # Arguments
-///
-/// * `u` - The x-coordinate (horizontal) of the projected point in pixels
-/// * `v` - The y-coordinate (vertical) of the projected point in pixels
-/// * `resolution` - The image resolution (width and height)
-///
-/// # Returns
-///
-/// * `Ok(())` if the point is within bounds
-/// * `Err(CameraModelError::ProjectionOutSideImage)` if the point is outside the image
-///
-/// # Examples
-///
-/// ```rust,ignore
-/// use apex_camera_models::camera::validate_projection_bounds;
-/// use apex_camera_models::camera::Resolution;
-///
-/// let resolution = Resolution { width: 640, height: 480 };
-/// assert!(validate_projection_bounds(320.0, 240.0, &resolution).is_ok());
-/// assert!(validate_projection_bounds(-10.0, 240.0, &resolution).is_err());
-/// assert!(validate_projection_bounds(320.0, 500.0, &resolution).is_err());
-/// ```
-pub fn validate_projection_bounds(
-    u: f64,
-    v: f64,
-    resolution: &Resolution,
-) -> Result<(), CameraModelError> {
-    if u < 0.0 || u >= resolution.width as f64 || v < 0.0 || v >= resolution.height as f64 {
-        return Err(CameraModelError::ProjectionOutSideImage);
+impl From<apex_camera_models::CameraModelError> for CameraModelError {
+    fn from(e: apex_camera_models::CameraModelError) -> Self {
+        CameraModelError::NumericalError(e.to_string())
     }
-    Ok(())
 }
 
-/// Validates that a 2D image point falls within the image boundaries for unprojection.
-///
-/// # Arguments
-///
-/// * `point_2d` - The 2D point in pixel coordinates (u, v)
-/// * `resolution` - The image resolution (width and height)
-///
-/// # Returns
-///
-/// * `Ok(())` if the point is within bounds
-/// * `Err(CameraModelError::PointIsOutSideImage)` if the point is outside the image
-///
-/// # Examples
-///
-/// ```rust,ignore
-/// use apex_camera_models::camera::validate_unprojection_bounds;
-/// use apex_camera_models::camera::Resolution;
-/// use nalgebra::Vector2;
-///
-/// let resolution = Resolution { width: 640, height: 480 };
-/// let valid_point = Vector2::new(320.0, 240.0);
-/// let invalid_point = Vector2::new(-10.0, 240.0);
-///
-/// assert!(validate_unprojection_bounds(&valid_point, &resolution).is_ok());
-/// assert!(validate_unprojection_bounds(&invalid_point, &resolution).is_err());
-/// ```
-pub fn validate_unprojection_bounds(
-    point_2d: &Vector2<f64>,
-    resolution: &Resolution,
-) -> Result<(), CameraModelError> {
-    if point_2d.x < 0.0
-        || point_2d.x >= resolution.width as f64
-        || point_2d.y < 0.0
-        || point_2d.y >= resolution.height as f64
-    {
-        return Err(CameraModelError::PointIsOutSideImage);
-    }
-    Ok(())
-}
-
-/// Validates that a 3D point's z-coordinate is positive (in front of camera).
-///
-/// # Arguments
-///
-/// * `z` - The z-coordinate of the 3D point in camera space
-///
-/// # Returns
-///
-/// * `Ok(())` if z is sufficiently positive
-/// * `Err(CameraModelError::PointAtCameraCenter)` if z is too close to zero or negative
-///
-/// # Examples
-///
-/// ```rust,ignore
-/// use apex_camera_models::camera::validate_point_in_front;
-///
-/// assert!(validate_point_in_front(1.0).is_ok());
-/// assert!(validate_point_in_front(0.001).is_ok());
-/// assert!(validate_point_in_front(0.0).is_err());
-/// assert!(validate_point_in_front(-1.0).is_err());
-/// ```
-pub fn validate_point_in_front(z: f64) -> Result<(), CameraModelError> {
-    if z < f64::EPSILON.sqrt() {
-        return Err(CameraModelError::PointAtCameraCenter);
-    }
-    Ok(())
-}
-
-/// Defines the core functionality and interface for all camera models.
-///
-/// This trait provides a common set of methods that any camera model implementation
-/// must provide, such as projection, unprojection, parameter loading/saving,
-/// validation, and retrieval of intrinsic and distortion parameters.
-pub trait CameraModel {
-    /// Projects a 3D point from the camera's coordinate system to 2D image coordinates.
-    ///
-    /// # Arguments
-    /// * `point_3d` - A reference to a `Vector3<f64>` representing the 3D point (X, Y, Z) in camera coordinates.
-    /// * `compute_jacobian` - A boolean flag indicating whether to compute the Jacobian of the projection function.
-    ///
-    /// # Returns
-    /// A `Result` containing:
-    /// * `Ok((Vector2<f64>, Option<DMatrix<f64>>))`: A tuple where the first element is the
-    ///   projected 2D point (u, v) in pixel coordinates, and the second element is an `Option`
-    ///   containing the Jacobian matrix (2x3) if `compute_jacobian` was true, otherwise `None`.
-    /// * `Err(CameraModelError)`: An error if the projection fails (e.g., point is behind the camera,
-    ///   projects outside the image, or numerical issues). Possible errors include
-    ///   `ProjectionOutSideImage` and `PointAtCameraCenter`.
+/// Object-safe camera model trait for projection/unprojection and parameter access.
+pub trait CameraModel: Send + Sync {
     fn project(&self, point_3d: &Vector3<f64>) -> Result<Vector2<f64>, CameraModelError>;
-
-    /// Unprojects a 2D point from image coordinates to a 3D ray in the camera's coordinate system.
-    ///
-    /// The resulting 3D vector is a direction ray originating from the camera center.
-    /// Its Z component is typically normalized to 1, but this can vary by model.
-    ///
-    /// # Arguments
-    /// * `point_2d` - A reference to a `Vector2<f64>` representing the 2D point (u, v) in pixel coordinates.
-    ///
-    /// # Returns
-    /// A `Result` containing:
-    /// * `Ok(Vector3<f64>)`: The 3D ray (direction vector) corresponding to the 2D point.
-    /// * `Err(CameraModelError)`: An error if the unprojection fails (e.g., point is outside the image,
-    ///   or numerical issues). Possible errors include `PointIsOutSideImage`.
     fn unproject(&self, point_2d: &Vector2<f64>) -> Result<Vector3<f64>, CameraModelError>;
-
-    /// Loads camera parameters from a YAML file.
-    ///
-    /// This method should parse a YAML file specified by `path` and populate the
-    /// camera model's parameters.
-    ///
-    /// # Arguments
-    /// * `path` - A string slice representing the path to the YAML file.
-    ///
-    /// # Returns
-    /// A `Result` containing:
-    /// * `Ok(Self)`: An instance of the camera model with parameters loaded from the file.
-    /// * `Err(CameraModelError)`: An error if loading fails (e.g., file not found, YAML parsing error,
-    ///   invalid parameters). Possible errors include `IOError`, `YamlError`, and `InvalidParams`.
-    fn load_from_yaml(path: &str) -> Result<Self, CameraModelError>
-    where
-        Self: Sized;
-
-    /// Saves the camera model's parameters to a YAML file.
-    ///
-    /// # Arguments
-    /// * `path` - A string slice representing the path to the YAML file where parameters will be saved.
-    ///
-    /// # Returns
-    /// A `Result` containing:
-    /// * `Ok(())`: If saving was successful.
-    /// * `Err(CameraModelError)`: An error if saving fails (e.g., I/O error). Possible errors include `IOError`.
-    fn save_to_yaml(&self, path: &str) -> Result<(), CameraModelError>;
-
-    /// Validates the current camera parameters.
-    ///
-    /// This method checks if the intrinsic parameters, distortion coefficients (if any),
-    /// and other model-specific parameters are valid.
-    ///
-    /// # Returns
-    /// A `Result` containing:
-    /// * `Ok(())`: If all parameters are valid.
-    /// * `Err(CameraModelError)`: An error describing the validation failure. Possible errors include
-    ///   `FocalLengthMustBePositive`, `PrincipalPointMustBeFinite`, and `InvalidParams`.
-    fn validate_params(&self) -> Result<(), CameraModelError>;
-
-    /// Returns the resolution of the camera.
-    ///
-    /// # Returns
-    /// A `Resolution` struct containing the width and height of the camera image.
     fn get_resolution(&self) -> Resolution;
-
-    /// Returns the intrinsic parameters of the camera.
-    ///
-    /// # Returns
-    /// An `Intrinsics` struct containing the focal lengths (fx, fy) and principal point (cx, cy).
     fn get_intrinsics(&self) -> Intrinsics;
-
-    /// Returns the distortion parameters of the camera.
-    ///
-    /// The specific meaning and number of distortion parameters depend on the camera model.
-    ///
-    /// # Returns
-    /// A `Vec<f64>` containing the distortion coefficients.
     fn get_distortion(&self) -> Vec<f64>;
-
-    /// Returns the name of the camera model.
-    ///
-    /// This method returns a string identifier for the specific camera model type.
-    ///
-    /// # Returns
-    /// A `&'static str` containing the name of the camera model (e.g., "double sphere", "eucm", etc.).
-    fn get_model_name(&self) -> &'static str;
+    fn get_model_name(&self) -> &str;
 }
 
-/// Provides common validation functions for camera parameters.
-///
-/// This module groups utility functions used to validate parts of camera models,
-/// such as intrinsic parameters, ensuring they meet common criteria (e.g., positive focal length).
-pub mod validation {
-    use super::*;
+/// Trait for loading/saving camera parameters from/to YAML files.
+pub trait YamlCamera: Sized {
+    fn load_from_yaml(path: &str) -> Result<Self, CameraModelError>;
+    fn save_to_yaml(&self, path: &str) -> Result<(), CameraModelError>;
+}
 
-    /// Validates the intrinsic camera parameters.
-    ///
-    /// Checks if the focal lengths (fx, fy) are positive and if the principal
-    /// point coordinates (cx, cy) are finite numbers.
-    ///
-    /// # Arguments
-    /// * `intrinsics` - A reference to an `Intrinsics` struct containing the parameters to validate.
-    ///
-    /// # Returns
-    /// A `Result` containing:
-    /// * `Ok(())`: If the intrinsic parameters are valid.
-    /// * `Err(CameraModelError)`: An error if validation fails. Possible errors include
-    ///   `FocalLengthMustBePositive` and `PrincipalPointMustBeFinite`.
-    pub fn validate_intrinsics(intrinsics: &Intrinsics) -> Result<(), CameraModelError> {
-        if intrinsics.fx <= 0.0 || intrinsics.fy <= 0.0 {
-            return Err(CameraModelError::FocalLengthMustBePositive);
+/// Unified camera model wrapping apex-camera-models with resolution.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CameraWithResolution {
+    pub intrinsics: Intrinsics,
+    pub resolution: Resolution,
+    pub model_name: String,
+    pub distortion_params: Vec<f64>,
+}
+
+impl CameraWithResolution {
+    pub fn pinhole_params(&self) -> PinholeParams {
+        PinholeParams {
+            fx: self.intrinsics.fx,
+            fy: self.intrinsics.fy,
+            cx: self.intrinsics.cx,
+            cy: self.intrinsics.cy,
         }
-        if !intrinsics.cx.is_finite() || !intrinsics.cy.is_finite() {
-            return Err(CameraModelError::PrincipalPointMustBeFinite);
+    }
+
+    fn make_distortion_model(&self) -> Result<DistortionModel, CameraModelError> {
+        let d = &self.distortion_params;
+        match self.model_name.as_str() {
+            "pinhole" => Ok(DistortionModel::None),
+            "double_sphere" => {
+                if d.len() < 2 {
+                    return Err(CameraModelError::InvalidParams(
+                        "DS needs 2 distortion params".into(),
+                    ));
+                }
+                // YAML order: [alpha, xi]
+                Ok(DistortionModel::DoubleSphere {
+                    xi: d[1],
+                    alpha: d[0],
+                })
+            }
+            "eucm" => {
+                if d.len() < 2 {
+                    return Err(CameraModelError::InvalidParams(
+                        "EUCM needs 2 distortion params".into(),
+                    ));
+                }
+                Ok(DistortionModel::EUCM {
+                    alpha: d[0],
+                    beta: d[1],
+                })
+            }
+            "fov" => {
+                if d.is_empty() {
+                    return Err(CameraModelError::InvalidParams(
+                        "FOV needs 1 distortion param".into(),
+                    ));
+                }
+                Ok(DistortionModel::FOV { w: d[0] })
+            }
+            "kannala_brandt" => {
+                if d.len() < 4 {
+                    return Err(CameraModelError::InvalidParams(
+                        "KB needs 4 distortion params".into(),
+                    ));
+                }
+                Ok(DistortionModel::KannalaBrandt {
+                    k1: d[0],
+                    k2: d[1],
+                    k3: d[2],
+                    k4: d[3],
+                })
+            }
+            "rad_tan" => {
+                if d.len() < 5 {
+                    return Err(CameraModelError::InvalidParams(
+                        "RadTan needs 5 distortion params".into(),
+                    ));
+                }
+                Ok(DistortionModel::BrownConrady {
+                    k1: d[0],
+                    k2: d[1],
+                    p1: d[2],
+                    p2: d[3],
+                    k3: d[4],
+                })
+            }
+            "ucm" => {
+                if d.is_empty() {
+                    return Err(CameraModelError::InvalidParams(
+                        "UCM needs 1 distortion param".into(),
+                    ));
+                }
+                Ok(DistortionModel::UCM { alpha: d[0] })
+            }
+            _ => Err(CameraModelError::InvalidParams(format!(
+                "Unknown model: {}",
+                self.model_name
+            ))),
         }
-        Ok(())
     }
 }
 
-/// Provides common YAML I/O helper functions to reduce code duplication across camera models.
-///
-/// This module contains utility functions for parsing and saving YAML files in the
-/// standard camera calibration format used by all camera models.
-pub mod yaml_io {
+impl CameraModel for CameraWithResolution {
+    fn project(&self, point_3d: &Vector3<f64>) -> Result<Vector2<f64>, CameraModelError> {
+        let pinhole = self.pinhole_params();
+        let distortion = self.make_distortion_model()?;
+        match self.model_name.as_str() {
+            "pinhole" => {
+                let cam = PinholeCamera::new(pinhole, distortion)?;
+                Ok(cam.project(point_3d)?)
+            }
+            "double_sphere" => {
+                let cam = DoubleSphereCamera::new(pinhole, distortion)?;
+                Ok(cam.project(point_3d)?)
+            }
+            "eucm" => {
+                // Direct construction to bypass alpha validation (alpha > 1 support)
+                let cam = EucmCamera {
+                    pinhole,
+                    distortion,
+                };
+                Ok(cam.project(point_3d)?)
+            }
+            "fov" => {
+                let cam = FovCamera::new(pinhole, distortion)?;
+                Ok(cam.project(point_3d)?)
+            }
+            "kannala_brandt" => {
+                let cam = KannalaBrandtCamera::new(pinhole, distortion)?;
+                Ok(cam.project(point_3d)?)
+            }
+            "rad_tan" => {
+                let cam = RadTanCamera::new(pinhole, distortion)?;
+                Ok(cam.project(point_3d)?)
+            }
+            "ucm" => {
+                // Direct construction to bypass alpha validation (alpha > 1 support)
+                let cam = UcmCamera {
+                    pinhole,
+                    distortion,
+                };
+                Ok(cam.project(point_3d)?)
+            }
+            _ => Err(CameraModelError::InvalidParams(format!(
+                "Unknown model: {}",
+                self.model_name
+            ))),
+        }
+    }
+
+    fn unproject(&self, point_2d: &Vector2<f64>) -> Result<Vector3<f64>, CameraModelError> {
+        let pinhole = self.pinhole_params();
+        let distortion = self.make_distortion_model()?;
+        match self.model_name.as_str() {
+            "pinhole" => {
+                let cam = PinholeCamera::new(pinhole, distortion)?;
+                Ok(cam.unproject(point_2d)?)
+            }
+            "double_sphere" => {
+                let cam = DoubleSphereCamera::new(pinhole, distortion)?;
+                Ok(cam.unproject(point_2d)?)
+            }
+            "eucm" => {
+                let cam = EucmCamera {
+                    pinhole,
+                    distortion,
+                };
+                Ok(cam.unproject(point_2d)?)
+            }
+            "fov" => {
+                let cam = FovCamera::new(pinhole, distortion)?;
+                Ok(cam.unproject(point_2d)?)
+            }
+            "kannala_brandt" => {
+                let cam = KannalaBrandtCamera::new(pinhole, distortion)?;
+                Ok(cam.unproject(point_2d)?)
+            }
+            "rad_tan" => {
+                let cam = RadTanCamera::new(pinhole, distortion)?;
+                Ok(cam.unproject(point_2d)?)
+            }
+            "ucm" => {
+                let cam = UcmCamera {
+                    pinhole,
+                    distortion,
+                };
+                Ok(cam.unproject(point_2d)?)
+            }
+            _ => Err(CameraModelError::InvalidParams(format!(
+                "Unknown model: {}",
+                self.model_name
+            ))),
+        }
+    }
+
+    fn get_resolution(&self) -> Resolution {
+        self.resolution.clone()
+    }
+
+    fn get_intrinsics(&self) -> Intrinsics {
+        self.intrinsics.clone()
+    }
+
+    fn get_distortion(&self) -> Vec<f64> {
+        self.distortion_params.clone()
+    }
+
+    fn get_model_name(&self) -> &str {
+        &self.model_name
+    }
+}
+
+impl YamlCamera for CameraWithResolution {
+    fn load_from_yaml(path: &str) -> Result<Self, CameraModelError> {
+        yaml_io::load_from_yaml(path)
+    }
+
+    fn save_to_yaml(&self, path: &str) -> Result<(), CameraModelError> {
+        yaml_io::save_to_yaml(self, path)
+    }
+}
+
+mod yaml_io {
     use super::*;
     use std::fs;
     use std::io::Write;
     use yaml_rust::YamlLoader;
 
-    /// Parses intrinsics, resolution, and optional extra parameters from a YAML file.
-    ///
-    /// This helper function extracts the common structure present in all camera model YAML files:
-    /// - Loads and parses the YAML document
-    /// - Extracts the `cam0` node
-    /// - Parses the `intrinsics` array (fx, fy, cx, cy, ...extra params)
-    /// - Parses the `resolution` array (width, height)
-    ///
-    /// # Arguments
-    ///
-    /// * `path` - Path to the YAML file
-    /// * `min_intrinsics_len` - Minimum number of intrinsic parameters expected
-    ///   (4 for pinhole, 5 for UCM, 6 for double sphere, etc.)
-    ///
-    /// # Returns
-    ///
-    /// Returns a tuple containing:
-    /// * `Intrinsics` - The parsed intrinsic parameters (fx, fy, cx, cy)
-    /// * `Resolution` - The parsed image resolution (width, height)
-    /// * `Vec<f64>` - Any extra parameters beyond the first 4 (distortion params, etc.)
-    ///
-    /// # Errors
-    ///
-    /// Returns `CameraModelError` if:
-    /// * File cannot be read
-    /// * YAML parsing fails
-    /// * Required nodes are missing
-    /// * Array lengths are insufficient
-    /// * Values cannot be parsed as expected types
-    pub fn parse_yaml_camera(
-        path: &str,
-        min_intrinsics_len: usize,
-    ) -> Result<(Intrinsics, Resolution, Vec<f64>), CameraModelError> {
+    /// Model name mapping from YAML `camera_model` field to our internal name.
+    fn normalize_model_name(name: &str) -> Result<&'static str, CameraModelError> {
+        match name {
+            "pinhole" => Ok("pinhole"),
+            "double_sphere" | "ds" => Ok("double_sphere"),
+            "eucm" | "extended_unified" => Ok("eucm"),
+            "fov" | "field_of_view" => Ok("fov"),
+            "kannala_brandt" | "kb" => Ok("kannala_brandt"),
+            "rad_tan" | "radtan" => Ok("rad_tan"),
+            "ucm" | "unified" => Ok("ucm"),
+            _ => Err(CameraModelError::InvalidParams(format!(
+                "Unknown camera model: {name}"
+            ))),
+        }
+    }
+
+    /// Expected number of intrinsics+distortion params for each model.
+    fn expected_intrinsics_len(model_name: &str) -> usize {
+        match model_name {
+            "pinhole" => 4,
+            "double_sphere" => 6,  // fx, fy, cx, cy, xi, alpha
+            "eucm" => 6,           // fx, fy, cx, cy, alpha, beta
+            "fov" => 5,            // fx, fy, cx, cy, w
+            "kannala_brandt" => 8, // fx, fy, cx, cy, k1, k2, k3, k4
+            "rad_tan" => 9,        // fx, fy, cx, cy, k1, k2, p1, p2, k3
+            "ucm" => 5,            // fx, fy, cx, cy, alpha
+            _ => 4,
+        }
+    }
+
+    pub fn load_from_yaml(path: &str) -> Result<CameraWithResolution, CameraModelError> {
         let contents = fs::read_to_string(path)?;
         let docs = YamlLoader::load_from_str(&contents)?;
 
         if docs.is_empty() {
             return Err(CameraModelError::InvalidParams(
-                "Empty YAML document".to_string(),
+                "Empty YAML document".into(),
             ));
         }
 
@@ -427,131 +348,117 @@ pub mod yaml_io {
 
         if cam_node.is_badvalue() {
             return Err(CameraModelError::InvalidParams(
-                "Missing 'cam0' node in YAML".to_string(),
+                "Missing 'cam0' node in YAML".into(),
             ));
         }
 
+        // Get camera model name
+        let model_name_raw = cam_node["camera_model"].as_str().ok_or_else(|| {
+            CameraModelError::InvalidParams("Missing 'camera_model' field".into())
+        })?;
+        let model_name = normalize_model_name(model_name_raw)?;
+        let min_len = expected_intrinsics_len(model_name);
+
         // Parse intrinsics array
         let intrinsics_yaml = cam_node["intrinsics"].as_vec().ok_or_else(|| {
-            CameraModelError::InvalidParams(
-                "YAML missing 'intrinsics' array under 'cam0'".to_string(),
-            )
+            CameraModelError::InvalidParams("YAML missing 'intrinsics' array under 'cam0'".into())
         })?;
 
-        if intrinsics_yaml.len() < min_intrinsics_len {
+        // Check for separate 'distortion' field (used by radtan and kannala_brandt YAMLs)
+        let separate_distortion = cam_node["distortion"].as_vec();
+        let has_separate_distortion = separate_distortion.is_some();
+
+        // If distortion is separate, we only need 4 intrinsics; otherwise need full min_len
+        let required_intrinsics = if has_separate_distortion { 4 } else { min_len };
+
+        if intrinsics_yaml.len() < required_intrinsics {
             return Err(CameraModelError::InvalidParams(format!(
                 "Intrinsics array must have at least {} elements, got {}",
-                min_intrinsics_len,
+                required_intrinsics,
                 intrinsics_yaml.len()
             )));
         }
 
         // Parse resolution array
         let resolution_yaml = cam_node["resolution"].as_vec().ok_or_else(|| {
-            CameraModelError::InvalidParams(
-                "YAML missing 'resolution' array under 'cam0'".to_string(),
-            )
+            CameraModelError::InvalidParams("YAML missing 'resolution' array under 'cam0'".into())
         })?;
 
         if resolution_yaml.len() < 2 {
             return Err(CameraModelError::InvalidParams(
-                "Resolution array must have at least 2 elements (width, height)".to_string(),
+                "Resolution array must have at least 2 elements".into(),
             ));
         }
 
-        // Extract intrinsics (first 4 elements)
-        let intrinsics = Intrinsics {
-            fx: intrinsics_yaml[0].as_f64().ok_or_else(|| {
-                CameraModelError::InvalidParams("Invalid fx: not a float".to_string())
-            })?,
-            fy: intrinsics_yaml[1].as_f64().ok_or_else(|| {
-                CameraModelError::InvalidParams("Invalid fy: not a float".to_string())
-            })?,
-            cx: intrinsics_yaml[2].as_f64().ok_or_else(|| {
-                CameraModelError::InvalidParams("Invalid cx: not a float".to_string())
-            })?,
-            cy: intrinsics_yaml[3].as_f64().ok_or_else(|| {
-                CameraModelError::InvalidParams("Invalid cy: not a float".to_string())
-            })?,
+        let parse_f64 = |yaml: &yaml_rust::Yaml, name: &str| -> Result<f64, CameraModelError> {
+            yaml.as_f64().ok_or_else(|| {
+                CameraModelError::InvalidParams(format!("Invalid {name}: not a float"))
+            })
         };
 
-        // Extract resolution
+        let intrinsics = Intrinsics {
+            fx: parse_f64(&intrinsics_yaml[0], "fx")?,
+            fy: parse_f64(&intrinsics_yaml[1], "fy")?,
+            cx: parse_f64(&intrinsics_yaml[2], "cx")?,
+            cy: parse_f64(&intrinsics_yaml[3], "cy")?,
+        };
+
         let resolution = Resolution {
             width: resolution_yaml[0].as_i64().ok_or_else(|| {
-                CameraModelError::InvalidParams("Invalid width: not an integer".to_string())
+                CameraModelError::InvalidParams("Invalid width: not an integer".into())
             })? as u32,
             height: resolution_yaml[1].as_i64().ok_or_else(|| {
-                CameraModelError::InvalidParams("Invalid height: not an integer".to_string())
+                CameraModelError::InvalidParams("Invalid height: not an integer".into())
             })? as u32,
         };
 
-        // Extract extra parameters (beyond first 4)
-        let mut extra_params = Vec::new();
-        for (i, param_yaml) in intrinsics_yaml.iter().enumerate().skip(4) {
-            let param = param_yaml.as_f64().ok_or_else(|| {
-                CameraModelError::InvalidParams(format!(
-                    "Invalid parameter at index {}: not a float",
-                    i
-                ))
-            })?;
-            extra_params.push(param);
+        // Extract distortion params: from separate 'distortion' field or from intrinsics[4..]
+        let mut distortion_params = Vec::new();
+        if let Some(dist_yaml) = separate_distortion {
+            for (i, param_yaml) in dist_yaml.iter().enumerate() {
+                let param = parse_f64(param_yaml, &format!("distortion[{i}]"))?;
+                distortion_params.push(param);
+            }
+        } else {
+            for (i, param_yaml) in intrinsics_yaml.iter().enumerate().skip(4) {
+                let param = parse_f64(param_yaml, &format!("param[{i}]"))?;
+                distortion_params.push(param);
+            }
         }
 
-        Ok((intrinsics, resolution, extra_params))
+        Ok(CameraWithResolution {
+            intrinsics,
+            resolution,
+            model_name: model_name.to_string(),
+            distortion_params,
+        })
     }
 
-    /// Saves camera model parameters to a YAML file in standard format.
-    ///
-    /// This helper creates a YAML file with the structure:
-    /// ```yaml
-    /// cam0:
-    ///   camera_model: <model_name>
-    ///   intrinsics: [fx, fy, cx, cy, ...extra_params]
-    ///   resolution: [width, height]
-    /// ```
-    ///
-    /// # Arguments
-    ///
-    /// * `path` - Path where the YAML file will be saved
-    /// * `model_name` - Name of the camera model (e.g., "pinhole", "double_sphere")
-    /// * `intrinsics` - The intrinsic parameters
-    /// * `resolution` - The image resolution
-    /// * `extra_params` - Additional parameters to append to intrinsics array
-    ///
-    /// # Errors
-    ///
-    /// Returns `CameraModelError` if:
-    /// * YAML serialization fails
-    /// * File creation/writing fails
-    pub fn save_yaml_camera(
-        path: &str,
-        model_name: &str,
-        intrinsics: &Intrinsics,
-        resolution: &Resolution,
-        extra_params: &[f64],
-    ) -> Result<(), CameraModelError> {
-        use serde_yaml;
+    pub fn save_to_yaml(cam: &CameraWithResolution, path: &str) -> Result<(), CameraModelError> {
+        // Build intrinsics array: [fx, fy, cx, cy, ...distortion]
+        let mut intrinsics_vec = vec![
+            cam.intrinsics.fx,
+            cam.intrinsics.fy,
+            cam.intrinsics.cx,
+            cam.intrinsics.cy,
+        ];
+        intrinsics_vec.extend_from_slice(&cam.distortion_params);
 
-        // Build intrinsics array: [fx, fy, cx, cy, ...extra]
-        let mut intrinsics_vec = vec![intrinsics.fx, intrinsics.fy, intrinsics.cx, intrinsics.cy];
-        intrinsics_vec.extend_from_slice(extra_params);
-
-        // Build YAML structure
         let yaml = serde_yaml::to_value(serde_yaml::Mapping::from_iter([(
             serde_yaml::Value::String("cam0".to_string()),
             serde_yaml::to_value(serde_yaml::Mapping::from_iter([
                 (
                     serde_yaml::Value::String("camera_model".to_string()),
-                    serde_yaml::Value::String(model_name.to_string()),
+                    serde_yaml::Value::String(cam.model_name.clone()),
                 ),
                 (
                     serde_yaml::Value::String("intrinsics".to_string()),
-                    serde_yaml::to_value(intrinsics_vec)
+                    serde_yaml::to_value(&intrinsics_vec)
                         .map_err(|e| CameraModelError::YamlError(e.to_string()))?,
                 ),
                 (
                     serde_yaml::Value::String("resolution".to_string()),
-                    serde_yaml::to_value(vec![resolution.width, resolution.height])
+                    serde_yaml::to_value(vec![cam.resolution.width, cam.resolution.height])
                         .map_err(|e| CameraModelError::YamlError(e.to_string()))?,
                 ),
             ]))
@@ -559,18 +466,15 @@ pub mod yaml_io {
         )]))
         .map_err(|e| CameraModelError::YamlError(e.to_string()))?;
 
-        // Convert to string and write to file
         let yaml_string =
             serde_yaml::to_string(&yaml).map_err(|e| CameraModelError::YamlError(e.to_string()))?;
 
-        // Create parent directory if it doesn't exist
         if let Some(parent) = std::path::Path::new(path).parent() {
             fs::create_dir_all(parent).map_err(|e| CameraModelError::IOError(e.to_string()))?;
         }
 
         let mut file =
             fs::File::create(path).map_err(|e| CameraModelError::IOError(e.to_string()))?;
-
         file.write_all(yaml_string.as_bytes())
             .map_err(|e| CameraModelError::IOError(e.to_string()))?;
 
@@ -578,103 +482,128 @@ pub mod yaml_io {
     }
 }
 
-/// Contains unit tests for the camera module.
 #[cfg(test)]
 mod tests {
     use super::*;
-    use nalgebra::DVector;
+    use approx::assert_relative_eq;
 
-    #[test]
-    fn test_camera_model_names() {
-        // Test Double Sphere model name
-        let ds_params = DVector::from_vec(vec![350.0, 350.0, 320.0, 240.0, 0.58, -0.18]);
-        let ds_model = double_sphere::DoubleSphereModel::new(&ds_params).unwrap();
-        assert_eq!(ds_model.get_model_name(), "double_sphere");
+    fn make_camera(model_name: &str, distortion_params: Vec<f64>) -> CameraWithResolution {
+        CameraWithResolution {
+            intrinsics: Intrinsics {
+                fx: 350.0,
+                fy: 350.0,
+                cx: 320.0,
+                cy: 240.0,
+            },
+            resolution: Resolution {
+                width: 640,
+                height: 480,
+            },
+            model_name: model_name.to_string(),
+            distortion_params,
+        }
+    }
 
-        // Test EUCM model name
-        let eucm_params = DVector::from_vec(vec![350.0, 350.0, 320.0, 240.0, 1.0, 0.5]);
-        let eucm_model = eucm::EucmModel::new(&eucm_params).unwrap();
-        assert_eq!(eucm_model.get_model_name(), "eucm");
-
-        // Test FOV model name
-        let fov_params = DVector::from_vec(vec![379.045, 379.008, 505.512, 509.969, 0.9259487501905697]);
-        let fov_model = fov::FovModel::new(&fov_params).unwrap();
-        assert_eq!(fov_model.get_model_name(), "fov");
-
-        // Test Kannala-Brandt model name
-        let kb_params =
-            DVector::from_vec(vec![460.0, 460.0, 320.0, 240.0, -0.01, 0.05, -0.08, 0.04]);
-        let kb_model = kannala_brandt::KannalaBrandtModel::new(&kb_params).unwrap();
-        assert_eq!(kb_model.get_model_name(), "kannala_brandt");
-
-        // Test Pinhole model name
-        let pinhole_params = DVector::from_vec(vec![460.0, 460.0, 320.0, 240.0]);
-        let pinhole_model = pinhole::PinholeModel::new(&pinhole_params).unwrap();
-        assert_eq!(pinhole_model.get_model_name(), "pinhole");
-
-        // Test RadTan model name
-        let radtan_params = DVector::from_vec(vec![
-            460.0, 460.0, 320.0, 240.0, -0.28, 0.07, 0.0002, 0.00002, 0.0,
-        ]);
-        let radtan_model = rad_tan::RadTanModel::new(&radtan_params).unwrap();
-        assert_eq!(radtan_model.get_model_name(), "rad_tan");
-
-        // Test UCM model name
-        let ucm_params = DVector::from_vec(vec![350.0, 350.0, 320.0, 240.0, 0.8]);
-        let ucm_model = ucm::UcmModel::new(&ucm_params).unwrap();
-        assert_eq!(ucm_model.get_model_name(), "ucm");
+    fn test_project_unproject_roundtrip(cam: &CameraWithResolution, tolerance: f64) {
+        // Test pixels near center (where all models are well-behaved)
+        let test_pixels = vec![
+            Vector2::new(320.0, 240.0),
+            Vector2::new(325.0, 245.0),
+            Vector2::new(315.0, 235.0),
+        ];
+        for pixel in &test_pixels {
+            let ray = cam.unproject(pixel).expect("unproject failed");
+            let reprojected = cam.project(&ray).expect("project failed");
+            assert_relative_eq!(reprojected.x, pixel.x, epsilon = tolerance);
+            assert_relative_eq!(reprojected.y, pixel.y, epsilon = tolerance);
+        }
     }
 
     #[test]
-    fn test_validate_projection_bounds() {
-        let resolution = Resolution {
-            width: 640,
-            height: 480,
-        };
-
-        // Valid points
-        assert!(validate_projection_bounds(0.0, 0.0, &resolution).is_ok());
-        assert!(validate_projection_bounds(320.0, 240.0, &resolution).is_ok());
-        assert!(validate_projection_bounds(639.0, 479.0, &resolution).is_ok());
-
-        // Invalid points
-        assert!(validate_projection_bounds(-1.0, 240.0, &resolution).is_err());
-        assert!(validate_projection_bounds(640.0, 240.0, &resolution).is_err());
-        assert!(validate_projection_bounds(320.0, -1.0, &resolution).is_err());
-        assert!(validate_projection_bounds(320.0, 480.0, &resolution).is_err());
-        assert!(validate_projection_bounds(1000.0, 1000.0, &resolution).is_err());
+    fn test_pinhole_roundtrip() {
+        let cam = make_camera("pinhole", vec![]);
+        test_project_unproject_roundtrip(&cam, 1e-6);
     }
 
     #[test]
-    fn test_validate_unprojection_bounds() {
-        let resolution = Resolution {
-            width: 640,
-            height: 480,
-        };
-
-        // Valid points
-        assert!(validate_unprojection_bounds(&Vector2::new(0.0, 0.0), &resolution).is_ok());
-        assert!(validate_unprojection_bounds(&Vector2::new(320.0, 240.0), &resolution).is_ok());
-        assert!(validate_unprojection_bounds(&Vector2::new(639.0, 479.0), &resolution).is_ok());
-
-        // Invalid points
-        assert!(validate_unprojection_bounds(&Vector2::new(-1.0, 240.0), &resolution).is_err());
-        assert!(validate_unprojection_bounds(&Vector2::new(640.0, 240.0), &resolution).is_err());
-        assert!(validate_unprojection_bounds(&Vector2::new(320.0, -1.0), &resolution).is_err());
-        assert!(validate_unprojection_bounds(&Vector2::new(320.0, 480.0), &resolution).is_err());
+    fn test_double_sphere_roundtrip() {
+        // distortion_params order: [alpha, xi]
+        let cam = make_camera("double_sphere", vec![0.58, -0.18]);
+        test_project_unproject_roundtrip(&cam, 1e-6);
     }
 
     #[test]
-    fn test_validate_point_in_front() {
-        // Valid z values
-        assert!(validate_point_in_front(1.0).is_ok());
-        assert!(validate_point_in_front(0.1).is_ok());
-        assert!(validate_point_in_front(0.001).is_ok());
+    fn test_eucm_roundtrip() {
+        // EUCM roundtrip: test only at optical center where model is most accurate
+        let cam = make_camera("eucm", vec![0.5, 1.0]);
+        let pixel = Vector2::new(320.0, 240.0);
+        let ray = cam.unproject(&pixel).expect("unproject failed");
+        let reprojected = cam.project(&ray).expect("project failed");
+        assert_relative_eq!(reprojected.x, pixel.x, epsilon = 1e-3);
+        assert_relative_eq!(reprojected.y, pixel.y, epsilon = 1e-3);
+    }
 
-        // Invalid z values
-        assert!(validate_point_in_front(0.0).is_err());
-        assert!(validate_point_in_front(-1.0).is_err());
-        assert!(validate_point_in_front(-0.001).is_err());
-        assert!(validate_point_in_front(1e-10).is_err()); // Too close to zero
+    #[test]
+    fn test_fov_roundtrip() {
+        let cam = make_camera("fov", vec![0.9]);
+        test_project_unproject_roundtrip(&cam, 1e-6);
+    }
+
+    #[test]
+    fn test_kannala_brandt_roundtrip() {
+        let cam = make_camera("kannala_brandt", vec![-0.01, 0.05, -0.08, 0.04]);
+        test_project_unproject_roundtrip(&cam, 1e-6);
+    }
+
+    #[test]
+    fn test_rad_tan_roundtrip() {
+        let cam = make_camera("rad_tan", vec![-0.28, 0.07, 0.0002, 0.00002, 0.0]);
+        test_project_unproject_roundtrip(&cam, 1e-4);
+    }
+
+    #[test]
+    fn test_ucm_roundtrip() {
+        let cam = make_camera("ucm", vec![0.8]);
+        test_project_unproject_roundtrip(&cam, 1e-3);
+    }
+
+    #[test]
+    fn test_model_names() {
+        assert_eq!(make_camera("pinhole", vec![]).get_model_name(), "pinhole");
+        assert_eq!(
+            make_camera("double_sphere", vec![0.58, -0.18]).get_model_name(),
+            "double_sphere"
+        );
+        assert_eq!(make_camera("eucm", vec![0.5, 1.0]).get_model_name(), "eucm");
+        assert_eq!(make_camera("fov", vec![0.9]).get_model_name(), "fov");
+        assert_eq!(
+            make_camera("kannala_brandt", vec![0.0; 4]).get_model_name(),
+            "kannala_brandt"
+        );
+        assert_eq!(
+            make_camera("rad_tan", vec![0.0; 5]).get_model_name(),
+            "rad_tan"
+        );
+        assert_eq!(make_camera("ucm", vec![0.8]).get_model_name(), "ucm");
+    }
+
+    #[test]
+    fn test_yaml_roundtrip() {
+        let cam = make_camera("double_sphere", vec![0.58, -0.18]);
+        let path = "/tmp/test_camera_yaml_roundtrip.yaml";
+        cam.save_to_yaml(path).expect("save failed");
+        let loaded = CameraWithResolution::load_from_yaml(path).expect("load failed");
+        assert_eq!(loaded.model_name, cam.model_name);
+        assert_relative_eq!(loaded.intrinsics.fx, cam.intrinsics.fx, epsilon = 1e-10);
+        assert_relative_eq!(loaded.intrinsics.fy, cam.intrinsics.fy, epsilon = 1e-10);
+        assert_eq!(loaded.resolution.width, cam.resolution.width);
+        assert_eq!(loaded.distortion_params.len(), cam.distortion_params.len());
+        for (a, b) in loaded
+            .distortion_params
+            .iter()
+            .zip(cam.distortion_params.iter())
+        {
+            assert_relative_eq!(a, b, epsilon = 1e-10);
+        }
     }
 }

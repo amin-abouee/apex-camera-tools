@@ -8,7 +8,7 @@ use nalgebra::{Matrix2xX, Matrix3xX, Vector2};
 use std::fs::File;
 use std::io::Write;
 
-use super::{ensure_output_dir, UtilError};
+use super::{UtilError, ensure_output_dir};
 
 /// Generate a grid of sample points that are evenly distributed across the image,
 /// optionally unprojecting them to 3D using a provided camera model.
