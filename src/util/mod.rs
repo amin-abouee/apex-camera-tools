@@ -8,23 +8,23 @@ mod error_metrics;
 mod image_quality;
 mod point_sampling;
 mod reporting;
-mod validation;
 mod undistort;
+mod validation;
 // Re-export all public items from sub-modules
-pub use error_metrics::{compute_reprojection_error, ProjectionError};
+pub use error_metrics::{ProjectionError, compute_reprojection_error};
 pub use image_quality::{
-    calculate_psnr, calculate_ssim, compute_image_quality_metrics,
+    ImageQualityMetrics, calculate_psnr, calculate_ssim, compute_image_quality_metrics,
     create_combined_projection_image, create_combined_projection_image_on_reference,
     create_projection_image, load_image, model_projection_visualization,
-    save_model_projection_image, ImageQualityMetrics,
+    save_model_projection_image,
 };
 pub use point_sampling::{export_point_correspondences, sample_points};
 pub use reporting::{
-    display_detailed_results, display_input_model_parameters, display_results_summary,
-    export_conversion_results, ConversionMetrics,
+    ConversionMetrics, display_detailed_results, display_input_model_parameters,
+    display_results_summary, export_conversion_results,
 };
-pub use validation::{validate_conversion_accuracy, RegionValidation, ValidationResults};
-pub use undistort::{undistort_image, InterpolationMethod};
+pub use undistort::{InterpolationMethod, undistort_image};
+pub use validation::{RegionValidation, ValidationResults, validate_conversion_accuracy};
 /// Ensure the output directory exists
 pub fn ensure_output_dir() -> Result<(), UtilError> {
     let output_dir = Path::new("output");

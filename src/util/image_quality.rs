@@ -11,7 +11,7 @@ use image::{GrayImage, Rgb, RgbImage};
 use nalgebra::{Matrix3xX, Vector2};
 use serde::{Deserialize, Serialize};
 
-use super::{ensure_output_dir, UtilError};
+use super::{UtilError, ensure_output_dir};
 
 /// Image quality metrics for assessing camera model accuracy.
 ///
